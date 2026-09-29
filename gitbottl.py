@@ -5,7 +5,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient, events, Button
 from telethon.tl.functions.messages import ImportChatInviteRequest
 
-# 1. سيرفر الويب الخاص بـ Render
+# 1. سيرفر الويب الخاص بـ Render لمنع توقف الخادم
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -67,58 +67,64 @@ async def load_channel_videos():
 # عند إضافة فيديو جديد في القناة
 @user_client.on(events.NewMessage)
 async def on_new_channel_video(event):
-    if channel_entity and event.chat_id == channel_entity.id:
-        if event.message.media and event.message.id not in video_messages:
-            video_messages.append(event.message.id)
-            print(f"تمت إضافة فيديو جديد تلقائياً! العدد الكلي: {len(video_messages)}")
+    try:
+        if channel_entity and event.chat_id == channel_entity.id:
+            if event.message.media and event.message.id not in video_messages:
+                video_messages.append(event.message.id)
+                print(f"تمت إضافة فيديو جديد تلقائياً! العدد الكلي: {len(video_messages)}")
+    except Exception as e:
+        print(f"خطأ في الاستماع للقناة: {e}")
 
-# التعامل مع أمر /start في الخاص فقط
+# التعامل مع أمر /start في الخاص
 @bot.on(events.NewMessage(pattern=r'^/start$', incoming=True))
 async def start_handler(event):
-    if not event.is_private:
-        return
+    try:
+        if not event.is_private:
+            return
 
-    total_videos = len(video_messages)
-    if total_videos == 0:
-        await event.respond("❌ لا توجد فيديوهات متاحة حالياً في القناة.")
-        return
+        total_videos = len(video_messages)
+        if total_videos == 0:
+            await event.respond("❌ لا توجد فيديوهات متاحة حالياً في القناة.")
+            return
 
-    buttons = []
-    row = []
-    for index, msg_id in enumerate(video_messages, start=1):
-        row.append(Button.inline(f"فيديو {index} 🎬", data=f"vid_{msg_id}_{index}"))
-        if len(row) == 5:
+        buttons = []
+        row = []
+        for index, msg_id in enumerate(video_messages, start=1):
+            row.append(Button.inline(f"فيديو {index} 🎬", data=f"vid_{msg_id}_{index}"))
+            if len(row) == 5:
+                buttons.append(row)
+                row = []
+        if row:
             buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
 
-    welcome_msg = (
-        f"مرحباً بك! 👋\n\n"
-        f"🎥 **عدد الفيديوهات المتاحة حالياً:** `{total_videos}` فيديو.\n"
-        f"اختر الفيديو المطلوب من الأزرار أدناه أو أرسل **رقم الفيديو** مباشرة."
-    )
-    await event.respond(welcome_msg, buttons=buttons)
+        welcome_msg = (
+            f"مرحباً بك! 👋\n\n"
+            f"🎥 **عدد الفيديوهات المتاحة حالياً:** `{total_videos}` فيديو.\n"
+            f"اختر الفيديو المطلوب من الأزرار أدناه أو أرسل **رقم الفيديو** مباشرة."
+        )
+        await event.respond(welcome_msg, buttons=buttons)
+    except Exception as e:
+        print(f"خطأ في امر start: {e}")
 
-# دالة الإرسال الأكيدة من خلال التحميل المباشر ثم الإرسال والتنظيف
+# دالة معالجة وإرسال الفيديو
 async def send_requested_video(user_id, msg_id, video_num, status_msg):
     downloaded_file = None
     try:
         await asyncio.sleep(WAIT_TIME_SECONDS)
         
-        # 1. الحصول على الرسالة من القناة الخاصة
+        # جلب الرسالة بواسطة user_client
         message = await user_client.get_messages(channel_entity, ids=msg_id)
 
         if not message or not message.media:
             await status_msg.edit("✕ لم يتم العثور على الفيديو!")
             return
 
-        await status_msg.edit(f"⏳ جاري رفع الفيديو رقم **{video_num}** وتجهيزه...")
+        await status_msg.edit(f"⏳ جاري تجهيز ورفع الفيديو رقم **{video_num}**...")
 
-        # 2. تحميل الميديا مؤقتاً بحساب الأدمن لتجاوز قيود القناة الخاصة
+        # تنزيل الميديا مؤقتاً
         downloaded_file = await user_client.download_media(message)
 
-        # 3. إرسال الفيديو بواسطة البوت مباشرة للمستخدم
+        # إرسال الفيديو عبر البوت
         await bot.send_file(
             user_id,
             file=downloaded_file,
@@ -129,49 +135,56 @@ async def send_requested_video(user_id, msg_id, video_num, status_msg):
         await status_msg.delete()
 
     except Exception as e:
-        print(f"خطأ أثناء معالجة وإرسال الفيديو: {e}")
-        await status_msg.edit("✕ حدث خطأ أثناء إرسال الفيديو. حاول مجدداً بعد لحظات.")
-
+        print(f"خطأ في إرسال الفيديو: {e}")
+        try:
+            await status_msg.edit("✕ حدث خطأ أثناء إرسال الفيديو، يرجى إعادة المحاولة.")
+        except Exception:
+            pass
     finally:
-        # 4. تنظيف الملفات المؤقتة من السيرفر فوراً
         if downloaded_file and os.path.exists(downloaded_file):
             try:
                 os.remove(downloaded_file)
             except Exception:
                 pass
 
-# التعامل مع الضغط على الأزرار
+# التعامل مع الأزرار
 @bot.on(events.CallbackQuery(pattern=r'^vid_(\d+)_(\d+)$'))
 async def callback_video_handler(event):
-    msg_id = int(event.pattern_match.group(1))
-    video_num = int(event.pattern_match.group(2))
-    user_id = event.sender_id
+    try:
+        msg_id = int(event.pattern_match.group(1))
+        video_num = int(event.pattern_match.group(2))
+        user_id = event.sender_id
 
-    await event.answer("جاري التجهيز...")
-    status_msg = await event.respond(f"⏳ جاري تجهيز الفيديو رقم **{video_num}**... يرجى الانتظار {WAIT_TIME_SECONDS} ثوانٍ.")
-    await send_requested_video(user_id, msg_id, video_num, status_msg)
+        await event.answer("جاري التجهيز...")
+        status_msg = await event.respond(f"⏳ جاري تجهيز الفيديو رقم **{video_num}**... يرجى الانتظار {WAIT_TIME_SECONDS} ثوانٍ.")
+        await send_requested_video(user_id, msg_id, video_num, status_msg)
+    except Exception as e:
+        print(f"خطأ في الزر: {e}")
 
-# التعامل مع كتابة رقم الفيديو نصياً
+# التعامل مع الأرقام النصية
 @bot.on(events.NewMessage(incoming=True))
 async def video_request_handler(event):
-    if not event.is_private:
-        return
+    try:
+        if not event.is_private:
+            return
 
-    text = event.text.strip() if event.text else ""
-    
-    if text.startswith('/') or not text.isdigit():
-        return
+        text = event.text.strip() if event.text else ""
+        
+        if text.startswith('/') or not text.isdigit():
+            return
 
-    video_num = int(text)
-    if video_num < 1 or video_num > len(video_messages):
-        await event.respond(f"❌ رقم الفيديو غير موجود. المتاح حالياً من 1 إلى {len(video_messages)}.")
-        return
+        video_num = int(text)
+        if video_num < 1 or video_num > len(video_messages):
+            await event.respond(f"❌ رقم الفيديو غير موجود. المتاح حالياً من 1 إلى {len(video_messages)}.")
+            return
 
-    msg_id = video_messages[video_num - 1]
-    user_id = event.sender_id
+        msg_id = video_messages[video_num - 1]
+        user_id = event.sender_id
 
-    status_msg = await event.respond(f"⏳ جاري تجهيز الفيديو رقم **{video_num}**... يرجى الانتظار {WAIT_TIME_SECONDS} ثوانٍ.")
-    await send_requested_video(user_id, msg_id, video_num, status_msg)
+        status_msg = await event.respond(f"⏳ جاري تجهيز الفيديو رقم **{video_num}**... يرجى الانتظار {WAIT_TIME_SECONDS} ثوانٍ.")
+        await send_requested_video(user_id, msg_id, video_num, status_msg)
+    except Exception as e:
+        print(f"خطأ في الاستجابة النصية: {e}")
 
 async def main():
     await user_client.start()
