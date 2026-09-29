@@ -64,15 +64,15 @@ async def load_channel_videos():
     except Exception as e:
         print(f"خطأ أثناء قراءة القناة: {e}")
 
-# عند إرسال فيديو جديد في القناة، يتم حفظه في القائمة بدون إرسال أي رد داخل القناة
+# عند إضافة فيديو جديد في القناة
 @user_client.on(events.NewMessage)
 async def on_new_channel_video(event):
     if channel_entity and event.chat_id == channel_entity.id:
         if event.message.media and event.message.id not in video_messages:
             video_messages.append(event.message.id)
-            print(f"تمت إضافة فيديو جديد تلقائياً! العدد الكلي الآن: {len(video_messages)}")
+            print(f"تمت إضافة فيديو جديد تلقائياً! العدد الكلي: {len(video_messages)}")
 
-# التعامل مع أمر /start في المحادثة الخاصة فقط
+# التعامل مع أمر /start في الخاص فقط
 @bot.on(events.NewMessage(pattern=r'^/start$', incoming=True))
 async def start_handler(event):
     if not event.is_private:
@@ -100,18 +100,20 @@ async def start_handler(event):
     )
     await event.respond(welcome_msg, buttons=buttons)
 
-# دالة إرسال الفيديو للمستخدم
-async def send_requested_video(user_id, msg_id, video_num, status_msg):
+# دالة معالجة وإرسال الفيديو بدون مشاكل الصلاحيات
+async def send_requested_video(event, user_id, msg_id, video_num, status_msg):
     try:
         await asyncio.sleep(WAIT_TIME_SECONDS)
         
+        # جلب الرسالة عبر حساب المستخدم الأدمن
         message = await user_client.get_messages(channel_entity, ids=msg_id)
 
         if not message or not message.media:
             await status_msg.edit("✕ لم يتم العثور على الفيديو!")
             return
 
-        await user_client.send_file(
+        # إرسال الفيديو مباشرة من البوت عبر إعادة استخدام كائن الميديا مع حماية المحتوى
+        await bot.send_file(
             user_id,
             file=message.media,
             caption=f"🎥 **فيديو رقم {video_num}**\n\n🔒 هذا المحتوى محمي وخاص بك فقط.",
@@ -121,13 +123,20 @@ async def send_requested_video(user_id, msg_id, video_num, status_msg):
         await status_msg.delete()
 
     except Exception as e:
-        print(f"خطأ أثناء الإرسال: {e}")
+        print(f"خطأ أثناء إرسال البوت، سيتم استخدام التوجيه المباشر بواسطة user_client: {e}")
         try:
-            await user_client.forward_messages(user_id, msg_id, channel_entity)
+            # طريقة احتياطية موثوقة: الإرسال عبر user_client مباشرة للمستخدم
+            await user_client.send_file(
+                user_id,
+                file=message.media,
+                caption=f"🎥 **فيديو رقم {video_num}**\n\n🔒 هذا المحتوى محمي وخاص بك فقط.",
+                protect_content=True,
+                has_spoiler=True
+            )
             await status_msg.delete()
-        except Exception as fwd_e:
-            print(f"خطأ التوجيه: {fwd_e}")
-            await status_msg.edit("✕ حدث خطأ أثناء إرسال الفيديو. تأكد من أن المستخدم بدأ محادثة مع حساب الأدمن.")
+        except Exception as err2:
+            print(f"فشل إرسال الميديا: {err2}")
+            await status_msg.edit("✕ حدث خطأ أثناء إرسال الفيديو. تأكد من أن المستخدم بدأ محادثة مع البوت وحساب الأدمن.")
 
 # التعامل مع الضغط على الأزرار
 @bot.on(events.CallbackQuery(pattern=r'^vid_(\d+)_(\d+)$'))
@@ -138,12 +147,11 @@ async def callback_video_handler(event):
 
     await event.answer("جاري التجهيز...")
     status_msg = await event.respond(f"⏳ جاري تجهيز الفيديو رقم **{video_num}**... يرجى الانتظار {WAIT_TIME_SECONDS} ثوانٍ.")
-    await send_requested_video(user_id, msg_id, video_num, status_msg)
+    await send_requested_video(event, user_id, msg_id, video_num, status_msg)
 
-# التعامل مع كتابة رقم الفيديو نصياً في المحادثة الخاصة فقط
+# التعامل مع كتابة رقم الفيديو نصياً
 @bot.on(events.NewMessage(incoming=True))
 async def video_request_handler(event):
-    # تجاهل أي رسائل ليست في الخاصة (كالرسائل التي تنشر في القناة)
     if not event.is_private:
         return
 
@@ -161,7 +169,7 @@ async def video_request_handler(event):
     user_id = event.sender_id
 
     status_msg = await event.respond(f"⏳ جاري تجهيز الفيديو رقم **{video_num}**... يرجى الانتظار {WAIT_TIME_SECONDS} ثوانٍ.")
-    await send_requested_video(user_id, msg_id, video_num, status_msg)
+    await send_requested_video(event, user_id, msg_id, video_num, status_msg)
 
 async def main():
     await user_client.start()
