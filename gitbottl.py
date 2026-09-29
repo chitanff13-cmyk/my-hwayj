@@ -4,7 +4,7 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient, events, Button
 
-# 1. سيرفر الويب الخاص بـ Render لمنع توقف الخدمة
+# 1. سيرفر الويب الخاص بـ Render
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -79,33 +79,42 @@ async def start_handler(event):
     )
     await event.respond(welcome_msg, buttons=buttons)
 
-# دالة مساعدة لإرسال الفيديو بأمان وحماية
+# دالة إرسال الفيديو المؤكدة
 async def send_requested_video(user_id, msg_id, video_num, status_msg):
+    file_path = None
     try:
         await asyncio.sleep(WAIT_TIME_SECONDS)
+        
+        # 1. جلب الرسالة عبر حساب الأدمن
         message = await user_client.get_messages(SOURCE_CHANNEL, ids=msg_id)
 
-        if message and message.media:
-            await bot.send_file(
-                user_id,
-                file=message.media,
-                caption=f"🎥 **فيديو رقم {video_num}**\n\n🔒 هذا المحتوى محمي وخاص بك فقط.",
-                protect_content=True,
-                has_spoiler=True
-            )
-            await status_msg.delete()
-        else:
+        if not message or not message.media:
             await status_msg.edit("✕ لم يتم العثور على الفيديو أو تم حذفه من القناة.")
+            return
+
+        await status_msg.edit(f"⏳ جاري تحميل وإرسال الفيديو رقم **{video_num}**...")
+
+        # 2. تحميل الملف سحابياً مؤقتاً عبر حساب الأدمن
+        file_path = await user_client.download_media(message)
+
+        # 3. إرسال الملف من البوت للزبون مع الحماية
+        await bot.send_file(
+            user_id,
+            file=file_path,
+            caption=f"🎥 **فيديو رقم {video_num}**\n\n🔒 هذا المحتوى محمي وخاص بك فقط.",
+            protect_content=True,
+            has_spoiler=True
+        )
+        await status_msg.delete()
 
     except Exception as e:
-        print(f"خطأ أثناء جلب وإرسال الفيديو عبر user_client: {e}")
-        try:
-            # محاولة احتياطية كحل بديل في حال تعثر الرفع المباشر
-            await bot.forward_messages(user_id, msg_id, SOURCE_CHANNEL)
-            await status_msg.delete()
-        except Exception as forward_err:
-            print(f"خطأ التوجيه الاحتياطي: {forward_err}")
-            await status_msg.edit("✕ حدث خطأ أثناء إرسال الفيديو. تأكد من وجود حساب الأدمن والبوت داخل القناة.")
+        print(f"خطأ أثناء معالجة وإرسال الفيديو: {e}")
+        await status_msg.edit("✕ حدث خطأ أثناء إرسال الفيديو. تحقق من أيدي القناة وصلاحيات الأدمن.")
+
+    finally:
+        # حذف الملف المؤقت من السيرفر بعد الإرسال للحفاظ على مساحة Render
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
 
 # التعامل مع الضغط على الأزرار
 @bot.on(events.CallbackQuery(pattern=r'^vid_(\d+)_(\d+)$'))
