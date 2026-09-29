@@ -1,21 +1,27 @@
-from telethon import TelegramClient
 import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
+from telethon import TelegramClient
 
+# 1. تعريف السيرفر واستجابته لطلبات GET و HEAD
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Bot is running successfully!")
-        
+
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
 
-# تشغيل سيرفر الويب في خلفية مستقلة
-threading.Thread(target=run_web_server, daemon=True).start()
+# 2. تعريف دالة تشغيل السيرفر
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
+    server.serve_forever()
 
+# 3. استدعاء التشغيل في خلفية مستقلة (بعد تعريف الدالة)
+threading.Thread(target=run_web_server, daemon=True).start()
 # ==================== الإعدادات ====================
 API_ID = 31726034
 API_HASH = '9d0b6b8cfdda846f5dbf8543fd6f7e9e'
