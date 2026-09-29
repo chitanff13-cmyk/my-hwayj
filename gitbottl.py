@@ -5,12 +5,16 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient, events, Button
 
-# 1. خادم الويب الخاص بـ Render
+# 1. خادم الويب الخاص بـ Render (مع دعم طلبات HEAD و GET)
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OK")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -28,7 +32,7 @@ PRIVATE_CHANNEL = 'https://t.me/+g8cboJzd-dE2NmM0'
 ADMIN_ID = 8675469992  # آيدي حسابك الأدمن
 VIDEOS_PER_PAGE = 9
 
-# ==================== قسم نصوص الرسائل (عدّلها كما تحب) ====================
+# ==================== قسم نصوص الرسائل ====================
 WELCOME_MSG = (
     "🔒 **مرحبا بيك عينيا  MAHALI DZ الخاص بنا**\n\n"
     "عذراً، هذا البوت مدفوع ولا يمكن استخدامه إلا عبر كود تفعيل.\n"
@@ -42,7 +46,7 @@ MAIN_MENU_MSG = (
 )
 
 VIDEO_CAPTION = "🎥 **فيديو رقم {display_index}**\n\n🔒 *محتوى خاص ومحمي من الحفظ والنقل.*"
-# =========================================================================
+# =========================================================
 
 USERS_FILE = 'active_users.json'
 CODES_FILE = 'vip_codes.json'
@@ -212,6 +216,7 @@ async def callback_video_handler(event):
             event.sender_id,
             file=downloaded_file,
             caption=caption_text,
+            supports_streaming=True,
             protect_content=True
         )
         await status.delete()
@@ -230,7 +235,7 @@ async def callback_video_handler(event):
 async def main():
     await user_client.start()
     await bot.start(bot_token=BOT_TOKEN)
-    print("✅ البوت يعمل بنجاح ويمكن تعديل رسائله بسهولة!")
+    print("✅ البوت يعمل بنجاح!")
     await asyncio.gather(
         bot.run_until_disconnected(),
         user_client.run_until_disconnected()
