@@ -100,22 +100,28 @@ async def start_handler(event):
     )
     await event.respond(welcome_msg, buttons=buttons)
 
-# دالة معالجة وإرسال الفيديو بدون مشاكل الصلاحيات
-async def send_requested_video(event, user_id, msg_id, video_num, status_msg):
+# دالة الإرسال الأكيدة من خلال التحميل المباشر ثم الإرسال والتنظيف
+async def send_requested_video(user_id, msg_id, video_num, status_msg):
+    downloaded_file = None
     try:
         await asyncio.sleep(WAIT_TIME_SECONDS)
         
-        # جلب الرسالة عبر حساب المستخدم الأدمن
+        # 1. الحصول على الرسالة من القناة الخاصة
         message = await user_client.get_messages(channel_entity, ids=msg_id)
 
         if not message or not message.media:
             await status_msg.edit("✕ لم يتم العثور على الفيديو!")
             return
 
-        # إرسال الفيديو مباشرة من البوت عبر إعادة استخدام كائن الميديا مع حماية المحتوى
+        await status_msg.edit(f"⏳ جاري رفع الفيديو رقم **{video_num}** وتجهيزه...")
+
+        # 2. تحميل الميديا مؤقتاً بحساب الأدمن لتجاوز قيود القناة الخاصة
+        downloaded_file = await user_client.download_media(message)
+
+        # 3. إرسال الفيديو بواسطة البوت مباشرة للمستخدم
         await bot.send_file(
             user_id,
-            file=message.media,
+            file=downloaded_file,
             caption=f"🎥 **فيديو رقم {video_num}**\n\n🔒 هذا المحتوى محمي وخاص بك فقط.",
             protect_content=True,
             has_spoiler=True
@@ -123,20 +129,16 @@ async def send_requested_video(event, user_id, msg_id, video_num, status_msg):
         await status_msg.delete()
 
     except Exception as e:
-        print(f"خطأ أثناء إرسال البوت، سيتم استخدام التوجيه المباشر بواسطة user_client: {e}")
-        try:
-            # طريقة احتياطية موثوقة: الإرسال عبر user_client مباشرة للمستخدم
-            await user_client.send_file(
-                user_id,
-                file=message.media,
-                caption=f"🎥 **فيديو رقم {video_num}**\n\n🔒 هذا المحتوى محمي وخاص بك فقط.",
-                protect_content=True,
-                has_spoiler=True
-            )
-            await status_msg.delete()
-        except Exception as err2:
-            print(f"فشل إرسال الميديا: {err2}")
-            await status_msg.edit("✕ حدث خطأ أثناء إرسال الفيديو. تأكد من أن المستخدم بدأ محادثة مع البوت وحساب الأدمن.")
+        print(f"خطأ أثناء معالجة وإرسال الفيديو: {e}")
+        await status_msg.edit("✕ حدث خطأ أثناء إرسال الفيديو. حاول مجدداً بعد لحظات.")
+
+    finally:
+        # 4. تنظيف الملفات المؤقتة من السيرفر فوراً
+        if downloaded_file and os.path.exists(downloaded_file):
+            try:
+                os.remove(downloaded_file)
+            except Exception:
+                pass
 
 # التعامل مع الضغط على الأزرار
 @bot.on(events.CallbackQuery(pattern=r'^vid_(\d+)_(\d+)$'))
@@ -147,7 +149,7 @@ async def callback_video_handler(event):
 
     await event.answer("جاري التجهيز...")
     status_msg = await event.respond(f"⏳ جاري تجهيز الفيديو رقم **{video_num}**... يرجى الانتظار {WAIT_TIME_SECONDS} ثوانٍ.")
-    await send_requested_video(event, user_id, msg_id, video_num, status_msg)
+    await send_requested_video(user_id, msg_id, video_num, status_msg)
 
 # التعامل مع كتابة رقم الفيديو نصياً
 @bot.on(events.NewMessage(incoming=True))
@@ -169,7 +171,7 @@ async def video_request_handler(event):
     user_id = event.sender_id
 
     status_msg = await event.respond(f"⏳ جاري تجهيز الفيديو رقم **{video_num}**... يرجى الانتظار {WAIT_TIME_SECONDS} ثوانٍ.")
-    await send_requested_video(event, user_id, msg_id, video_num, status_msg)
+    await send_requested_video(user_id, msg_id, video_num, status_msg)
 
 async def main():
     await user_client.start()
