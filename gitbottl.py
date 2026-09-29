@@ -25,11 +25,25 @@ API_HASH = '9d0b6b8cfdda846f5dbf8543fd6f7e9e'
 BOT_TOKEN = '8716514427:AAHSvYDqyThe-pTSVis8qavNc05H-Pi5EE0'
 
 PRIVATE_CHANNEL = 'https://t.me/+g8cboJzd-dE2NmM0'
-ADMIN_ID = 8675469992  # آيدي حسابك الشخصي للتحكم بالأكواد
+ADMIN_ID = 8675469992  # آيدي حسابك الأدمن
 VIDEOS_PER_PAGE = 9
-# ===================================================
 
-# إدارة المفعّلين والأكواد في ملفات محليّة
+# ==================== قسم نصوص الرسائل (عدّلها كما تحب) ====================
+WELCOME_MSG = (
+    "🔒 **مرحبا بيك عينيا  MAHALI DZ الخاص بنا**\n\n"
+    "عذراً، هذا البوت مدفوع ولا يمكن استخدامه إلا عبر كود تفعيل.\n"
+    "يرجى إرسال **كود التفعيل** الخاص بك هنا للبدء 👇"
+)
+
+MAIN_MENU_MSG = (
+    "✨ **أهلاً بك مجدداً في  MAHALI DZ**\n\n"
+    "📊 **إجمالي الفيديوهات الحصرية المتاحة:** `{total_videos}` فيديو\n"
+    "اختر الفيديو المطلوب من الأزرار أدناه للاستلام المباشر:"
+)
+
+VIDEO_CAPTION = "🎥 **فيديو رقم {display_index}**\n\n🔒 *محتوى خاص ومحمي من الحفظ والنقل.*"
+# =========================================================================
+
 USERS_FILE = 'active_users.json'
 CODES_FILE = 'vip_codes.json'
 
@@ -46,13 +60,12 @@ def save_json(filename, data):
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-active_users = load_json(USERS_FILE)  # قائمة المشتركين {user_id: True}
-valid_codes = load_json(CODES_FILE)   # الأكواد المتاحة {code: max_uses}
+active_users = load_json(USERS_FILE)
+valid_codes = load_json(CODES_FILE)
 
 bot = TelegramClient('bot_session', API_ID, API_HASH)
 user_client = TelegramClient('uploader_session', API_ID, API_HASH)
 
-# جلب الفيديوهات الحقيقية من القناة
 async def get_channel_videos():
     video_messages = []
     async for message in user_client.iter_messages(PRIVATE_CHANNEL, reverse=True):
@@ -61,7 +74,6 @@ async def get_channel_videos():
                 video_messages.append(message.id)
     return video_messages
 
-# بناء قائمة الأزرار والصفحات
 def build_page_keyboard(video_ids, page=1):
     total_videos = len(video_ids)
     total_pages = (total_videos + VIDEOS_PER_PAGE - 1) // VIDEOS_PER_PAGE if total_videos > 0 else 1
@@ -92,18 +104,6 @@ def build_page_keyboard(video_ids, page=1):
     buttons.append(nav_row)
     return buttons, total_videos, total_pages
 
-# أمر إضافة كود جديد (للأدمن فقط): /addcode CODE_NAME
-@bot.on(events.NewMessage(pattern=r'^/addcode (.+)$'))
-async def add_code_handler(event):
-    if event.sender_id != ADMIN_ID:
-        return
-    
-    code = event.pattern_match.group(1).strip()
-    valid_codes[code] = 1  # كود يتفعل لشخص واحد فقط
-    save_json(CODES_FILE, valid_codes)
-    await event.respond(f"✅ **تم إنشاء كود التفعيل بنجاح:**\n`{code}`")
-
-# عند كتابة /start
 @bot.on(events.NewMessage(pattern=r'^/start$', incoming=True))
 async def start_handler(event):
     if not event.is_private:
@@ -111,16 +111,10 @@ async def start_handler(event):
 
     user_id = str(event.sender_id)
 
-    # التحقق هل المستخدم مفعل مسبقاً
-    if user_id not in active_users:
-        msg = (
-            "🔒 **هذا البوت مدفوع ومحمي.**\n\n"
-            "الرجاء إدخال **كود التفعيل** الخاص بك للوصول إلى المحتوى:"
-        )
-        await event.respond(msg)
+    if user_id not in active_users and event.sender_id != ADMIN_ID:
+        await event.respond(WELCOME_MSG)
         return
 
-    # إذا كان مفعل تظهر له الأزرار مباشرة
     status = await event.respond("⏳ **جاري فحص القناة وتنظيم قائمة الفيديوهات...**")
     try:
         video_ids = await get_channel_videos()
@@ -129,47 +123,53 @@ async def start_handler(event):
             return
 
         buttons, total_videos, total_pages = build_page_keyboard(video_ids, page=1)
-        msg = (
-            f"✨ **أهلاً بك في البوت VIP**\n\n"
-            f"📊 **إجمالي الفيديوهات المتاحة:** `{total_videos}` فيديو\n"
-            f"اختر الفيديو المطلوب للاستلام المباشر:"
-        )
+        msg = MAIN_MENU_MSG.format(total_videos=total_videos)
         await status.edit(msg, buttons=buttons)
     except Exception as e:
         print(f"Error starting: {e}")
         await status.edit("❌ **حدث خطأ أثناء تحميل الفيديوهات.**")
 
-# التحقق من إدخال الكود من الزبون
 @bot.on(events.NewMessage(incoming=True))
-async def check_activation_code(event):
-    if not event.is_private or event.text.startswith('/'):
+async def handle_all_messages(event):
+    if not event.is_private or event.text.startswith('/start'):
         return
 
+    text = event.text.strip()
     user_id = str(event.sender_id)
-    if user_id in active_users:
-        return  # مفعل مسبقاً
 
-    input_text = event.text.strip()
+    # إضافة كود جديد للزبائن من قبل الأدمن
+    if event.sender_id == ADMIN_ID and text.lower().replace('/', '').startswith('addcode'):
+        parts = text.split()
+        if len(parts) >= 2:
+            code = parts[1].strip()
+            valid_codes[code] = 1
+            save_json(CODES_FILE, valid_codes)
+            await event.respond(f"✅ **تم إنشاء كود التفعيل بنجاح:**\n`{code}`")
+        else:
+            await event.respond("❌ **يرجى كتابة الكود بعد الأمر، مثال:**\n`/addcode client123`")
+        return
 
-    if input_text in valid_codes and valid_codes[input_text] > 0:
-        # تفعيل الحساب واستهلاك الكود
+    # للزبائن: التحقق من كود التفعيل
+    if user_id in active_users or event.sender_id == ADMIN_ID:
+        return
+
+    if text in valid_codes and valid_codes[text] > 0:
         active_users[user_id] = True
-        valid_codes[input_text] -= 1
-        if valid_codes[input_text] <= 0:
-            del valid_codes[input_text]
+        valid_codes[text] -= 1
+        if valid_codes[text] <= 0:
+            del valid_codes[text]
 
         save_json(USERS_FILE, active_users)
         save_json(CODES_FILE, valid_codes)
 
-        await event.respond("✅ **تم تفعيل اشتراكك بنجاح! أرسل الان /start للبدء.**")
+        await event.respond("✅ **تم تفعيل اشتراكك بنجاح! أرسل الآن /start للبدء.**")
     else:
         await event.respond("❌ **كود التفعيل غير صحيح أو تم استخدامه من قبل.**")
 
-# التنقل بين الصفحات
 @bot.on(events.CallbackQuery(pattern=r'^page_(\d+)$'))
 async def page_handler(event):
     user_id = str(event.sender_id)
-    if user_id not in active_users:
+    if user_id not in active_users and event.sender_id != ADMIN_ID:
         await event.answer("❌ غير مسموح لك بالوصول.", alert=True)
         return
 
@@ -179,20 +179,15 @@ async def page_handler(event):
     try:
         video_ids = await get_channel_videos()
         buttons, total_videos, total_pages = build_page_keyboard(video_ids, page=page)
-        msg = (
-            f"✨ **أهلاً بك في البوت VIP**\n\n"
-            f"📊 **إجمالي الفيديوهات المتاحة:** `{total_videos}` فيديو\n"
-            f"اختر الفيديو المطلوب للاستلام المباشر:"
-        )
+        msg = MAIN_MENU_MSG.format(total_videos=total_videos)
         await event.edit(msg, buttons=buttons)
     except Exception as e:
         print(f"Error page navigation: {e}")
 
-# جلب الفيديو المختار
 @bot.on(events.CallbackQuery(pattern=r'^getmsg_(\d+)_(\d+)$'))
 async def callback_video_handler(event):
     user_id = str(event.sender_id)
-    if user_id not in active_users:
+    if user_id not in active_users and event.sender_id != ADMIN_ID:
         await event.answer("❌ غير مسموح لك بالوصول.", alert=True)
         return
 
@@ -212,10 +207,11 @@ async def callback_video_handler(event):
         await status.edit(f"🚀 **جاري رفع فيديو رقم {display_index}...**")
         downloaded_file = await user_client.download_media(msg)
 
+        caption_text = VIDEO_CAPTION.format(display_index=display_index)
         await bot.send_file(
             event.sender_id,
             file=downloaded_file,
-            caption=f"🎥 **فيديو رقم {display_index}**\n\n🔒 *محتوى خاص ومحمي من النقل.*",
+            caption=caption_text,
             protect_content=True
         )
         await status.delete()
@@ -234,7 +230,7 @@ async def callback_video_handler(event):
 async def main():
     await user_client.start()
     await bot.start(bot_token=BOT_TOKEN)
-    print("✅ البوت يعمل بنظام التفعيل الفردي وحماية الاشتراك VIP!")
+    print("✅ البوت يعمل بنجاح ويمكن تعديل رسائله بسهولة!")
     await asyncio.gather(
         bot.run_until_disconnected(),
         user_client.run_until_disconnected()
