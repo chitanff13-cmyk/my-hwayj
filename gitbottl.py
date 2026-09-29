@@ -1,3 +1,4 @@
+from telethon import TelegramClient
 import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
