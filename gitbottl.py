@@ -1,7 +1,7 @@
 import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
-from telethon import TelegramClient
+from telethon import TelegramClient, events
 
 # 1. تعريف السيرفر واستجابته لطلبات GET و HEAD
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
