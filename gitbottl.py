@@ -3,9 +3,8 @@ import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient, events, Button
-from telethon.tl.functions.messages import ImportChatInviteRequest
 
-# 1. سيرفر الويب الخاص بـ Render لمنع توقف الخادم
+# 1. سيرفر الويب الخاص بـ Render
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -28,103 +27,60 @@ API_ID = 31726034
 API_HASH = '9d0b6b8cfdda846f5dbf8543fd6f7e9e'
 BOT_TOKEN = '8716514427:AAHSvYDqyThe-pTSVis8qavNc05H-Pi5EE0'
 
-PRIVATE_INVITE_LINK = 'https://t.me/+g8cboJzd-dE2NmM0'
-INVITE_HASH = 'g8cboJzd-dE2NmM0'
+# ضع هنا الآيدي الرقمي للقناة الخاصة (4273448312-100) أو معرف القناة
+CHANNEL_ID = -8675469992  # ⚠️ استبدل هذا الرقم بآيدي قناتك الخاصة
 
-WAIT_TIME_SECONDS = 5
+WAIT_TIME_SECONDS = 3
 # ===================================================
-
-video_messages = []
-channel_entity = None
 
 bot = TelegramClient('bot_session', API_ID, API_HASH)
 user_client = TelegramClient('uploader_session', API_ID, API_HASH)
 
-async def load_channel_videos():
-    global video_messages, channel_entity
-    video_messages.clear()
-    
-    try:
-        channel_entity = await user_client.get_entity(PRIVATE_INVITE_LINK)
-    except Exception:
-        try:
-            updates = await user_client(ImportChatInviteRequest(INVITE_HASH))
-            channel_entity = updates.chats[0]
-            print("تم الانضمام للقناة الخاصة بنجاح!")
-        except Exception as join_err:
-            print(f"تنبيه الانضمام: {join_err}")
-            channel_entity = await user_client.get_entity(PRIVATE_INVITE_LINK)
-
-    try:
-        async for message in user_client.iter_messages(channel_entity):
-            if message.media:
-                video_messages.append(message.id)
-        video_messages.reverse()
-        print(f"تم تحميل {len(video_messages)} فيديو من القناة بنجاح.")
-    except Exception as e:
-        print(f"خطأ أثناء قراءة القناة: {e}")
-
-# عند إضافة فيديو جديد في القناة
-@user_client.on(events.NewMessage)
-async def on_new_channel_video(event):
-    try:
-        if channel_entity and event.chat_id == channel_entity.id:
-            if event.message.media and event.message.id not in video_messages:
-                video_messages.append(event.message.id)
-                print(f"تمت إضافة فيديو جديد تلقائياً! العدد الكلي: {len(video_messages)}")
-    except Exception as e:
-        print(f"خطأ في الاستماع للقناة: {e}")
-
-# التعامل مع أمر /start في الخاص
+# التعامل مع أمر /start مباشرة وبدون تعليق
 @bot.on(events.NewMessage(pattern=r'^/start$', incoming=True))
 async def start_handler(event):
-    try:
-        if not event.is_private:
-            return
+    if not event.is_private:
+        return
 
-        total_videos = len(video_messages)
-        if total_videos == 0:
-            await event.respond("❌ لا توجد فيديوهات متاحة حالياً في القناة.")
-            return
+    welcome_msg = (
+        f"مرحباً بك! 👋\n\n"
+        f"أرسل **رقم الفيديو** الذي تريد مشاهدته مباشرة (مثال: `1` أو `2` أو `5`)."
+    )
+    await event.respond(welcome_msg)
 
-        buttons = []
-        row = []
-        for index, msg_id in enumerate(video_messages, start=1):
-            row.append(Button.inline(f"فيديو {index} 🎬", data=f"vid_{msg_id}_{index}"))
-            if len(row) == 5:
-                buttons.append(row)
-                row = []
-        if row:
-            buttons.append(row)
+# التعامل مع طلب الفيديو عن طريق الرقم النصي مباشرة
+@bot.on(events.NewMessage(incoming=True))
+async def video_request_handler(event):
+    if not event.is_private:
+        return
 
-        welcome_msg = (
-            f"مرحباً بك! 👋\n\n"
-            f"🎥 **عدد الفيديوهات المتاحة حالياً:** `{total_videos}` فيديو.\n"
-            f"اختر الفيديو المطلوب من الأزرار أدناه أو أرسل **رقم الفيديو** مباشرة."
-        )
-        await event.respond(welcome_msg, buttons=buttons)
-    except Exception as e:
-        print(f"خطأ في امر start: {e}")
+    text = event.text.strip() if event.text else ""
+    
+    if text.startswith('/') or not text.isdigit():
+        return
 
-# دالة معالجة وإرسال الفيديو
-async def send_requested_video(user_id, msg_id, video_num, status_msg):
+    video_num = int(text)
+    user_id = event.sender_id
+
+    status_msg = await event.respond(f"⏳ جاري البحث وجلب الفيديو رقم **{video_num}**...")
+
     downloaded_file = None
     try:
-        await asyncio.sleep(WAIT_TIME_SECONDS)
-        
-        # جلب الرسالة بواسطة user_client
-        message = await user_client.get_messages(channel_entity, ids=msg_id)
+        # جلب الرسالة برقمها المباشر من القناة بواسطة user_client
+        # افتراض أن رقم الفيديو يطابق ID الرسالة أو ترتيبها
+        message = await user_client.get_messages(CHANNEL_ID, ids=video_num)
 
         if not message or not message.media:
-            await status_msg.edit("✕ لم يتم العثور على الفيديو!")
+            await status_msg.edit(f"❌ لم يتم العثور على فيديو برقم `{video_num}` في القناة.")
             return
 
-        await status_msg.edit(f"⏳ جاري تجهيز ورفع الفيديو رقم **{video_num}**...")
+        await status_msg.edit(f"⏳ جاري رفع الفيديو رقم **{video_num}**... يرجى الانتظار {WAIT_TIME_SECONDS} ثوانٍ.")
+        await asyncio.sleep(WAIT_TIME_SECONDS)
 
-        # تنزيل الميديا مؤقتاً
+        # تحميل الفيديو مؤقتاً بواسطة user_client
         downloaded_file = await user_client.download_media(message)
 
-        # إرسال الفيديو عبر البوت
+        # إرسال الفيديو من خلال البوت كملف محمي
         await bot.send_file(
             user_id,
             file=downloaded_file,
@@ -135,11 +91,9 @@ async def send_requested_video(user_id, msg_id, video_num, status_msg):
         await status_msg.delete()
 
     except Exception as e:
-        print(f"خطأ في إرسال الفيديو: {e}")
-        try:
-            await status_msg.edit("✕ حدث خطأ أثناء إرسال الفيديو، يرجى إعادة المحاولة.")
-        except Exception:
-            pass
+        print(f"خطأ أثناء الإرسال: {e}")
+        await status_msg.edit("❌ حدث خطأ أثناء جلب الفيديو. تأكد من صحة رقم الفيديو أو صلاحيات الأدمن.")
+
     finally:
         if downloaded_file and os.path.exists(downloaded_file):
             try:
@@ -147,50 +101,11 @@ async def send_requested_video(user_id, msg_id, video_num, status_msg):
             except Exception:
                 pass
 
-# التعامل مع الأزرار
-@bot.on(events.CallbackQuery(pattern=r'^vid_(\d+)_(\d+)$'))
-async def callback_video_handler(event):
-    try:
-        msg_id = int(event.pattern_match.group(1))
-        video_num = int(event.pattern_match.group(2))
-        user_id = event.sender_id
-
-        await event.answer("جاري التجهيز...")
-        status_msg = await event.respond(f"⏳ جاري تجهيز الفيديو رقم **{video_num}**... يرجى الانتظار {WAIT_TIME_SECONDS} ثوانٍ.")
-        await send_requested_video(user_id, msg_id, video_num, status_msg)
-    except Exception as e:
-        print(f"خطأ في الزر: {e}")
-
-# التعامل مع الأرقام النصية
-@bot.on(events.NewMessage(incoming=True))
-async def video_request_handler(event):
-    try:
-        if not event.is_private:
-            return
-
-        text = event.text.strip() if event.text else ""
-        
-        if text.startswith('/') or not text.isdigit():
-            return
-
-        video_num = int(text)
-        if video_num < 1 or video_num > len(video_messages):
-            await event.respond(f"❌ رقم الفيديو غير موجود. المتاح حالياً من 1 إلى {len(video_messages)}.")
-            return
-
-        msg_id = video_messages[video_num - 1]
-        user_id = event.sender_id
-
-        status_msg = await event.respond(f"⏳ جاري تجهيز الفيديو رقم **{video_num}**... يرجى الانتظار {WAIT_TIME_SECONDS} ثوانٍ.")
-        await send_requested_video(user_id, msg_id, video_num, status_msg)
-    except Exception as e:
-        print(f"خطأ في الاستجابة النصية: {e}")
-
 async def main():
+    print("جاري تشغيل حساب المستخدم وبوت التلجرام...")
     await user_client.start()
     await bot.start(bot_token=BOT_TOKEN)
-    await load_channel_videos()
-    print("🤖 البوت شغال وجاهز لاستقبال الأوامر!")
+    print("🤖 البوت شغال وجاهز تماماً الآن!")
     await asyncio.gather(
         bot.run_until_disconnected(),
         user_client.run_until_disconnected()
