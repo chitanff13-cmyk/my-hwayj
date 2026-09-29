@@ -4,7 +4,7 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient, events, Button
 
-# 1. سيرفر الويب الخاص بـ Render
+# 1. سيرفر الويب الخاص بـ Render لمنع توقف الخدمة
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -79,6 +79,34 @@ async def start_handler(event):
     )
     await event.respond(welcome_msg, buttons=buttons)
 
+# دالة مساعدة لإرسال الفيديو بأمان وحماية
+async def send_requested_video(user_id, msg_id, video_num, status_msg):
+    try:
+        await asyncio.sleep(WAIT_TIME_SECONDS)
+        message = await user_client.get_messages(SOURCE_CHANNEL, ids=msg_id)
+
+        if message and message.media:
+            await bot.send_file(
+                user_id,
+                file=message.media,
+                caption=f"🎥 **فيديو رقم {video_num}**\n\n🔒 هذا المحتوى محمي وخاص بك فقط.",
+                protect_content=True,
+                has_spoiler=True
+            )
+            await status_msg.delete()
+        else:
+            await status_msg.edit("✕ لم يتم العثور على الفيديو أو تم حذفه من القناة.")
+
+    except Exception as e:
+        print(f"خطأ أثناء جلب وإرسال الفيديو عبر user_client: {e}")
+        try:
+            # محاولة احتياطية كحل بديل في حال تعثر الرفع المباشر
+            await bot.forward_messages(user_id, msg_id, SOURCE_CHANNEL)
+            await status_msg.delete()
+        except Exception as forward_err:
+            print(f"خطأ التوجيه الاحتياطي: {forward_err}")
+            await status_msg.edit("✕ حدث خطأ أثناء إرسال الفيديو. تأكد من وجود حساب الأدمن والبوت داخل القناة.")
+
 # التعامل مع الضغط على الأزرار
 @bot.on(events.CallbackQuery(pattern=r'^vid_(\d+)_(\d+)$'))
 async def callback_video_handler(event):
@@ -88,26 +116,7 @@ async def callback_video_handler(event):
 
     await event.answer("جاري التجهيز...")
     status_msg = await event.respond(f"⏳ جاري تجهيز الفيديو رقم **{video_num}**... يرجى الانتظار {WAIT_TIME_SECONDS} ثوانٍ.")
-
-    try:
-        await asyncio.sleep(WAIT_TIME_SECONDS)
-        message = await user_client.get_messages(SOURCE_CHANNEL, ids=msg_id)
-
-        if not message or not message.media:
-            await status_msg.edit("✕ لم يتم العثور على الفيديو!")
-            return
-
-        await bot.send_file(
-            user_id,
-            file=message.media,
-            caption=f"🎥 **فيديو رقم {video_num}**\n\n🔒 هذا المحتوى محمي وخاص بك فقط.",
-            protect_content=True,
-            has_spoiler=True
-        )
-        await status_msg.delete()
-    except Exception as e:
-        print(f"خطأ أثناء الإرسال: {e}")
-        await status_msg.edit("✕ حدث خطأ أثناء إرسال الفيديو.")
+    await send_requested_video(user_id, msg_id, video_num, status_msg)
 
 # التعامل مع كتابة رقم الفيديو نصياً
 @bot.on(events.NewMessage)
@@ -126,26 +135,7 @@ async def video_request_handler(event):
     user_id = event.sender_id
 
     status_msg = await event.respond(f"⏳ جاري تجهيز الفيديو رقم **{video_num}**... يرجى الانتظار {WAIT_TIME_SECONDS} ثوانٍ.")
-
-    try:
-        await asyncio.sleep(WAIT_TIME_SECONDS)
-        message = await user_client.get_messages(SOURCE_CHANNEL, ids=msg_id)
-
-        if not message or not message.media:
-            await status_msg.edit("✕ لم يتم العثور على فيديو بهذا الرقم!")
-            return
-
-        await bot.send_file(
-            user_id,
-            file=message.media,
-            caption=f"🎥 **فيديو رقم {video_num}**\n\n🔒 هذا المحتوى محمي وخاص بك فقط.",
-            protect_content=True,
-            has_spoiler=True
-        )
-        await status_msg.delete()
-    except Exception as e:
-        print(f"خطأ أثناء الإرسال: {e}")
-        await status_msg.edit("✕ حدث خطأ أثناء إرسال الفيديو.")
+    await send_requested_video(user_id, msg_id, video_num, status_msg)
 
 async def main():
     await user_client.start()
