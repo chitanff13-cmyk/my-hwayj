@@ -28,7 +28,6 @@ API_ID = 31726034
 API_HASH = '9d0b6b8cfdda846f5dbf8543fd6f7e9e'
 BOT_TOKEN = '8716514427:AAHSvYDqyThe-pTSVis8qavNc05H-Pi5EE0'
 
-# رابط القناة الخاصة وحاشية الدعوة (Hash)
 PRIVATE_INVITE_LINK = 'https://t.me/+g8cboJzd-dE2NmM0'
 INVITE_HASH = 'g8cboJzd-dE2NmM0'
 
@@ -45,7 +44,6 @@ async def load_channel_videos():
     global video_messages, channel_entity
     video_messages.clear()
     
-    # الانضمام إلى القناة الخاصة إذا لم يكن الحساب منضماً بالفعل
     try:
         channel_entity = await user_client.get_entity(PRIVATE_INVITE_LINK)
     except Exception:
@@ -55,7 +53,6 @@ async def load_channel_videos():
             print("تم الانضمام للقناة الخاصة بنجاح!")
         except Exception as join_err:
             print(f"تنبيه الانضمام: {join_err}")
-            # في حال كان منضماً مسبقاً
             channel_entity = await user_client.get_entity(PRIVATE_INVITE_LINK)
 
     try:
@@ -67,9 +64,20 @@ async def load_channel_videos():
     except Exception as e:
         print(f"خطأ أثناء قراءة القناة: {e}")
 
-# التعامل مع أمر /start
-@bot.on(events.NewMessage(pattern=r'^/start$'))
+# عند إرسال فيديو جديد في القناة، يتم حفظه في القائمة بدون إرسال أي رد داخل القناة
+@user_client.on(events.NewMessage)
+async def on_new_channel_video(event):
+    if channel_entity and event.chat_id == channel_entity.id:
+        if event.message.media and event.message.id not in video_messages:
+            video_messages.append(event.message.id)
+            print(f"تمت إضافة فيديو جديد تلقائياً! العدد الكلي الآن: {len(video_messages)}")
+
+# التعامل مع أمر /start في المحادثة الخاصة فقط
+@bot.on(events.NewMessage(pattern=r'^/start$', incoming=True))
 async def start_handler(event):
+    if not event.is_private:
+        return
+
     total_videos = len(video_messages)
     if total_videos == 0:
         await event.respond("❌ لا توجد فيديوهات متاحة حالياً في القناة.")
@@ -92,19 +100,17 @@ async def start_handler(event):
     )
     await event.respond(welcome_msg, buttons=buttons)
 
-# دالة إرسال الفيديو المحسنة
+# دالة إرسال الفيديو للمستخدم
 async def send_requested_video(user_id, msg_id, video_num, status_msg):
     try:
         await asyncio.sleep(WAIT_TIME_SECONDS)
         
-        # جلب الرسالة عبر كيان القناة المباشر
         message = await user_client.get_messages(channel_entity, ids=msg_id)
 
         if not message or not message.media:
             await status_msg.edit("✕ لم يتم العثور على الفيديو!")
             return
 
-        # إرسال الملف مباشرة للمستخدم
         await user_client.send_file(
             user_id,
             file=message.media,
@@ -121,7 +127,7 @@ async def send_requested_video(user_id, msg_id, video_num, status_msg):
             await status_msg.delete()
         except Exception as fwd_e:
             print(f"خطأ التوجيه: {fwd_e}")
-            await status_msg.edit("✕ حدث خطأ أثناء إرسال الفيديو. تأكد من أن المستخدم بدأ محادثة مع حساب الأدمن أو البوت.")
+            await status_msg.edit("✕ حدث خطأ أثناء إرسال الفيديو. تأكد من أن المستخدم بدأ محادثة مع حساب الأدمن.")
 
 # التعامل مع الضغط على الأزرار
 @bot.on(events.CallbackQuery(pattern=r'^vid_(\d+)_(\d+)$'))
@@ -134,9 +140,13 @@ async def callback_video_handler(event):
     status_msg = await event.respond(f"⏳ جاري تجهيز الفيديو رقم **{video_num}**... يرجى الانتظار {WAIT_TIME_SECONDS} ثوانٍ.")
     await send_requested_video(user_id, msg_id, video_num, status_msg)
 
-# التعامل مع كتابة رقم الفيديو نصياً
-@bot.on(events.NewMessage)
+# التعامل مع كتابة رقم الفيديو نصياً في المحادثة الخاصة فقط
+@bot.on(events.NewMessage(incoming=True))
 async def video_request_handler(event):
+    # تجاهل أي رسائل ليست في الخاصة (كالرسائل التي تنشر في القناة)
+    if not event.is_private:
+        return
+
     text = event.text.strip() if event.text else ""
     
     if text.startswith('/') or not text.isdigit():
