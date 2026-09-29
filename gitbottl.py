@@ -3,6 +3,7 @@ import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient, events, Button
+from telethon.tl.functions.messages import ImportChatInviteRequest
 
 # 1. سيرفر الويب الخاص بـ Render
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
@@ -27,32 +28,44 @@ API_ID = 31726034
 API_HASH = '9d0b6b8cfdda846f5dbf8543fd6f7e9e'
 BOT_TOKEN = '8716514427:AAHSvYDqyThe-pTSVis8qavNc05H-Pi5EE0'
 
-SOURCE_CHANNEL = -1004273448312
+# رابط القناة الخاصة وحاشية الدعوة (Hash)
+PRIVATE_INVITE_LINK = 'https://t.me/+g8cboJzd-dE2NmM0'
+INVITE_HASH = 'g8cboJzd-dE2NmM0'
+
 WAIT_TIME_SECONDS = 5
 # ===================================================
 
 video_messages = []
+channel_entity = None
 
 bot = TelegramClient('bot_session', API_ID, API_HASH)
 user_client = TelegramClient('uploader_session', API_ID, API_HASH)
 
 async def load_channel_videos():
-    global video_messages
+    global video_messages, channel_entity
     video_messages.clear()
+    
+    # الانضمام إلى القناة الخاصة إذا لم يكن الحساب منضماً بالفعل
     try:
-        async for message in user_client.iter_messages(SOURCE_CHANNEL):
+        channel_entity = await user_client.get_entity(PRIVATE_INVITE_LINK)
+    except Exception:
+        try:
+            updates = await user_client(ImportChatInviteRequest(INVITE_HASH))
+            channel_entity = updates.chats[0]
+            print("تم الانضمام للقناة الخاصة بنجاح!")
+        except Exception as join_err:
+            print(f"تنبيه الانضمام: {join_err}")
+            # في حال كان منضماً مسبقاً
+            channel_entity = await user_client.get_entity(PRIVATE_INVITE_LINK)
+
+    try:
+        async for message in user_client.iter_messages(channel_entity):
             if message.media:
                 video_messages.append(message.id)
         video_messages.reverse()
         print(f"تم تحميل {len(video_messages)} فيديو من القناة بنجاح.")
     except Exception as e:
         print(f"خطأ أثناء قراءة القناة: {e}")
-
-@user_client.on(events.NewMessage(chats=SOURCE_CHANNEL))
-async def on_new_channel_video(event):
-    if event.message.media:
-        if event.message.id not in video_messages:
-            video_messages.append(event.message.id)
 
 # التعامل مع أمر /start
 @bot.on(events.NewMessage(pattern=r'^/start$'))
@@ -79,28 +92,22 @@ async def start_handler(event):
     )
     await event.respond(welcome_msg, buttons=buttons)
 
-# دالة إرسال الفيديو المؤكدة
+# دالة إرسال الفيديو المحسنة
 async def send_requested_video(user_id, msg_id, video_num, status_msg):
-    file_path = None
     try:
         await asyncio.sleep(WAIT_TIME_SECONDS)
         
-        # 1. جلب الرسالة عبر حساب الأدمن
-        message = await user_client.get_messages(SOURCE_CHANNEL, ids=msg_id)
+        # جلب الرسالة عبر كيان القناة المباشر
+        message = await user_client.get_messages(channel_entity, ids=msg_id)
 
         if not message or not message.media:
-            await status_msg.edit("✕ لم يتم العثور على الفيديو أو تم حذفه من القناة.")
+            await status_msg.edit("✕ لم يتم العثور على الفيديو!")
             return
 
-        await status_msg.edit(f"⏳ جاري تحميل وإرسال الفيديو رقم **{video_num}**...")
-
-        # 2. تحميل الملف سحابياً مؤقتاً عبر حساب الأدمن
-        file_path = await user_client.download_media(message)
-
-        # 3. إرسال الملف من البوت للزبون مع الحماية
-        await bot.send_file(
+        # إرسال الملف مباشرة للمستخدم
+        await user_client.send_file(
             user_id,
-            file=file_path,
+            file=message.media,
             caption=f"🎥 **فيديو رقم {video_num}**\n\n🔒 هذا المحتوى محمي وخاص بك فقط.",
             protect_content=True,
             has_spoiler=True
@@ -108,13 +115,13 @@ async def send_requested_video(user_id, msg_id, video_num, status_msg):
         await status_msg.delete()
 
     except Exception as e:
-        print(f"خطأ أثناء معالجة وإرسال الفيديو: {e}")
-        await status_msg.edit("✕ حدث خطأ أثناء إرسال الفيديو. تحقق من أيدي القناة وصلاحيات الأدمن.")
-
-    finally:
-        # حذف الملف المؤقت من السيرفر بعد الإرسال للحفاظ على مساحة Render
-        if file_path and os.path.exists(file_path):
-            os.remove(file_path)
+        print(f"خطأ أثناء الإرسال: {e}")
+        try:
+            await user_client.forward_messages(user_id, msg_id, channel_entity)
+            await status_msg.delete()
+        except Exception as fwd_e:
+            print(f"خطأ التوجيه: {fwd_e}")
+            await status_msg.edit("✕ حدث خطأ أثناء إرسال الفيديو. تأكد من أن المستخدم بدأ محادثة مع حساب الأدمن أو البوت.")
 
 # التعامل مع الضغط على الأزرار
 @bot.on(events.CallbackQuery(pattern=r'^vid_(\d+)_(\d+)$'))
