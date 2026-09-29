@@ -1,10 +1,10 @@
-import asyncio
 import os
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import asyncio
 import threading
-from telethon import TelegramClient, events
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from telethon import TelegramClient, events, Button
 
-# 1. تعريف السيرفر واستجابته لطلبات GET و HEAD
+# 1. تعريف السيرفر واستجابته لطلبات GET و HEAD لمنع توقف Render
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -21,8 +21,9 @@ def run_web_server():
     server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
     server.serve_forever()
 
-# 3. استدعاء التشغيل في خلفية مستقلة (بعد تعريف الدالة)
+# 3. استدعاء التشغيل في خلفية مستقلة
 threading.Thread(target=run_web_server, daemon=True).start()
+
 # ==================== الإعدادات ====================
 API_ID = 31726034
 API_HASH = '9d0b6b8cfdda846f5dbf8543fd6f7e9e'
@@ -35,60 +36,126 @@ SOURCE_CHANNEL = -1004273448312  # استبدله بأيدي قناتك إذا �
 WAIT_TIME_SECONDS = 5
 # ===================================================
 
+# قائمة لتخزين معرّفات الفيديوهات (IDs) الموجودة بالقناة
+video_messages = []
+
 # عميل البوت للاستجابة للزبائن
 bot = TelegramClient('bot_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
 # عميل الحساب الشخصي (الأدمن) لسحب الملفات من القناة
 user_client = TelegramClient('uploader_session', API_ID, API_HASH)
 
+# دالة لجلب وترتيب الفيديوهات من القناة عند تشغيل البوت
+async def load_channel_videos():
+    global video_messages
+    video_messages.clear()
+    async for message in user_client.iter_messages(SOURCE_CHANNEL):
+        if message.video or message.document or message.media:
+            video_messages.append(message.id)
+    # ترتيب الفيديوهات من الأقدم إلى الأحدث
+    video_messages.reverse()
+
+# استماع للقناة الخاصة: عند نشر أي فيديو جديد يزيد العداد والأزرار تلقائياً
+@user_client.on(events.NewMessage(chats=SOURCE_CHANNEL))
+async def on_new_channel_video(event):
+    if event.message.video or event.message.document or event.message.media:
+        if event.message.id not in video_messages:
+            video_messages.append(event.message.id)
+
+# الاستجابة لأمر /start وإرسال عدد الفيديوهات مع أزرار الخيارات
 @bot.on(events.NewMessage(pattern=r'^/start$'))
 async def start_handler(event):
+    total_videos = len(video_messages)
+    if total_videos == 0:
+        await event.respond("❌ لا توجد فيديوهات متاحة في القناة حالياً.")
+        return
+
+    # إنشاء أزرار شفافة (كل سطر يحوي 5 أزرار)
+    buttons = []
+    row = []
+    for index, msg_id in enumerate(video_messages, start=1):
+        row.append(Button.inline(f"فيديو {index} 🎬", data=f"vid_{msg_id}_{index}"))
+        if len(row) == 5:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+
     welcome_msg = (
-        "مرحباً بك! 👋\n\n"
-        "للحصول على أي فيديو، قم بإرسال **رقم الفيديو** فقط (مثال: `1` أو `15` أو `50`)."
+        f"مرحباً بك! 👋\n\n"
+        f"🎥 **عدد الفيديوهات المتاحة حالياً:** `{total_videos}` فيديو.\n"
+        f"اضغط على أيقونة الفيديو أدناه أو أرسل **رقم الفيديو** فقط (مثال: `1` أو `15`)."
     )
-    await event.respond(welcome_msg)
+    await event.respond(welcome_msg, buttons=buttons)
 
-@bot.on(events.NewMessage)
-async def video_request_handler(event):
-    text = event.text.strip()
-    
-    # تجاهل أمر /start
-    if text == "/start":
-        return
-
-    # التحقق من أن المكتوب هو رقم فيديو
-    if not text.isdigit():
-        await event.respond("⚠️ يرجى إرسال رقم الفيديو فقط (مثال: 5).")
-        return
-
-    msg_id = int(text)
+# معالجة الضغط على الأزرار الشفافة
+@bot.on(events.CallbackQuery(pattern=r'^vid_(\d+)_(\d+)$'))
+async def callback_video_handler(event):
+    msg_id = int(event.pattern_match.group(1))
+    video_num = int(event.pattern_match.group(2))
     user_id = event.sender_id
 
-    # 1. إرسال رسالة التمهيد مع العداد
-    status_msg = await event.respond(f"⏳ جاري تجهيز الفيديو رقم **{msg_id}**... يرجى الانتظار {WAIT_TIME_SECONDS} ثوانٍ.")
+    await event.answer("جاري التجهيز...")
+    status_msg = await event.respond(f"⏳ جاري تجهيز الفيديو رقم **{video_num}**... يرجى الانتظار {WAIT_TIME_SECONDS} ثوانٍ.")
 
     try:
-        # 2. الانتظار لمدة 5 ثوانٍ
         await asyncio.sleep(WAIT_TIME_SECONDS)
-
-        # 3. جلب الرسالة/الفيديو من القناة بواسطة حساب الأدمن
         message = await user_client.get_messages(SOURCE_CHANNEL, ids=msg_id)
 
         if not message or not message.media:
             await status_msg.edit("✕ لم يتم العثور على فيديو بهذا الرقم!")
             return
 
-        # 4. إرسال الفيديو للزبون مع تفعيل حماية منع الحفظ والتوجيه
         await bot.send_file(
             user_id,
             file=message.media,
-            caption=f"🎥 **فيديو رقم {msg_id}**\n\n🔒 هذا المحتوى محمي وخاص بك فقط.",
-            protect_content=True, # منع التحميل، التوجيه، والتسجيل
-            has_spoiler=True       # إخفاء المعاينة بالضباب
+            caption=f"🎥 **فيديو رقم {video_num}**\n\n🔒 هذا المحتوى محمي وخاص بك فقط.",
+            protect_content=True,
+            has_spoiler=True
         )
+        await status_msg.delete()
 
-        # 5. حذف رسالة الانتظار بعد إرسال الفيديو بنجاح
+    except Exception as e:
+        print(f"خطأ أثناء جلب الفيديو: {e}")
+        await status_msg.edit("✕ حدث خطأ أثناء إرسال الفيديو. تأكد من الرقم وصلاحيات الأدمن.")
+
+# معالجة الطلب عند كتابة رقم الفيديو كتابةً
+@bot.on(events.NewMessage)
+async def video_request_handler(event):
+    text = event.text.strip()
+    
+    if text == "/start":
+        return
+
+    if not text.isdigit():
+        await event.respond("⚠️ يرجى إرسال رقم الفيديو فقط (مثال: 5) أو اختيار زر من القائمة.")
+        return
+
+    video_num = int(text)
+    if video_num < 1 or video_num > len(video_messages):
+        await event.respond(f"❌ رقم الفيديو غير موجود. المتاح حالياً من 1 إلى {len(video_messages)}.")
+        return
+
+    msg_id = video_messages[video_num - 1]
+    user_id = event.sender_id
+
+    status_msg = await event.respond(f"⏳ جاري تجهيز الفيديو رقم **{video_num}**... يرجى الانتظار {WAIT_TIME_SECONDS} ثوانٍ.")
+
+    try:
+        await asyncio.sleep(WAIT_TIME_SECONDS)
+        message = await user_client.get_messages(SOURCE_CHANNEL, ids=msg_id)
+
+        if not message or not message.media:
+            await status_msg.edit("✕ لم يتم العثور على فيديو بهذا الرقم!")
+            return
+
+        await bot.send_file(
+            user_id,
+            file=message.media,
+            caption=f"🎥 **فيديو رقم {video_num}**\n\n🔒 هذا المحتوى محمي وخاص بك فقط.",
+            protect_content=True,
+            has_spoiler=True
+        )
         await status_msg.delete()
 
     except Exception as e:
@@ -97,7 +164,8 @@ async def video_request_handler(event):
 
 async def main():
     await user_client.start()
-    print("🤖 بوت التوزيع الحصري شغال وجاهز لاستقبال الطلبات مع مؤقت الانتظار!")
+    await load_channel_videos()
+    print("🤖 بوت التوزيع الحصري شغال وجاهز لاستقبال الطلبات!")
     await bot.run_until_disconnected()
 
 if __name__ == '__main__':
